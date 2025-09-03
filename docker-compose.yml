@@ -1,0 +1,400 @@
+version: '3.8'
+
+services:
+  # MySQL Database for Structured Data
+  mysql:
+    image: mysql:8.0
+    container_name: dst-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-dst_airlines}
+      MYSQL_USER: ${MYSQL_USER:-dst_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-dst_password}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./config/mysql.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    networks:
+      - dst-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # MongoDB for Document Storage
+  mongodb:
+    image: mongo:7.0
+    container_name: dst-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-admin_password}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE:-dst_airlines}
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+      - ./scripts/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - dst-network
+    restart: unless-stopped
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Neo4j Graph Database for Route Networks
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: dst-neo4j
+    environment:
+      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/neo4j_password}
+      NEO4J_PLUGINS: '["apoc", "graph-data-science"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*,gds.*
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 2g
+      NEO4J_dbms_memory_pagecache_size: 512m
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/var/lib/neo4j/import
+      - ./scripts/neo4j-init.cypher:/var/lib/neo4j/import/init.cypher:ro
+    networks:
+      - dst-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "neo4j_password", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Elasticsearch for Search and Analytics
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: dst-elasticsearch
+    environment:
+      - node.name=elasticsearch
+      - cluster.name=dst-airlines-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - "ES_JAVA_OPTS=-Xms${ELASTICSEARCH_HEAP:-512m} -Xmx${ELASTICSEARCH_HEAP:-512m}"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+      - "${ELASTICSEARCH_TRANSPORT_PORT:-9300}:9300"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+      - ./config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+    networks:
+      - dst-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Kibana for Elasticsearch Visualization
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: dst-kibana
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      SERVER_NAME: kibana
+      SERVER_HOST: 0.0.0.0
+      XPACK_SECURITY_ENABLED: false
+    ports:
+      - "${KIBANA_PORT:-5601}:5601"
+    volumes:
+      - ./config/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - dst-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis for Caching and Session Storage
+  redis:
+    image: redis:7-alpine
+    container_name: dst-redis
+    command: redis-server --appendonly yes --replica-read-only no
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+      - ./config/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - dst-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # PostgreSQL for Airflow Metadata
+  postgres:
+    image: postgres:15-alpine
+    container_name: dst-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - dst-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airflow}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # FastAPI Backend Service
+  api:
+    build:
+      context: .
+      dockerfile: deployment/dockerfiles/Dockerfile.api
+      args:
+        PYTHON_VERSION: 3.11
+    container_name: dst-api
+    environment:
+      - ENV=${ENV:-development}
+      - DEBUG=${DEBUG:-true}
+      - DATABASE_URL=mysql+aiomysql://${MYSQL_USER:-dst_user}:${MYSQL_PASSWORD:-dst_password}@mysql:3306/${MYSQL_DATABASE:-dst_airlines}
+      - MONGODB_URL=mongodb://${MONGO_ROOT_USERNAME:-admin}:${MONGO_ROOT_PASSWORD:-admin_password}@mongodb:27017/${MONGO_DATABASE:-dst_airlines}?authSource=admin
+      - NEO4J_URL=neo4j://${NEO4J_AUTH:-neo4j:neo4j_password}@neo4j:7687
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - REDIS_URL=redis://redis:6379
+      - LUFTHANSA_CLIENT_ID=${LUFTHANSA_CLIENT_ID}
+      - LUFTHANSA_CLIENT_SECRET=${LUFTHANSA_CLIENT_SECRET}
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - dst-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Streamlit Dashboard
+  dashboard:
+    build:
+      context: .
+      dockerfile: deployment/dockerfiles/Dockerfile.dashboard
+      args:
+        PYTHON_VERSION: 3.11
+    container_name: dst-dashboard
+    environment:
+      - API_URL=http://api:8000
+      - ENV=${ENV:-development}
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    volumes:
+      - ./src/dashboard:/app/dashboard:ro
+      - ./assets:/app/assets:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - dst-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Apache Airflow Webserver
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: deployment/dockerfiles/Dockerfile.airflow
+    container_name: dst-airflow-webserver
+    command: webserver
+    environment: &airflow-common-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/${POSTGRES_DB:-airflow}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-your_fernet_key_here}
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+      PYTHONPATH: /opt/airflow/dags:/opt/airflow/src
+    ports:
+      - "${AIRFLOW_PORT:-8080}:8080"
+    volumes:
+      - ./src/pipeline/airflow_dags:/opt/airflow/dags:ro
+      - ./logs/airflow:/opt/airflow/logs
+      - ./src:/opt/airflow/src:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - dst-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Apache Airflow Scheduler
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: deployment/dockerfiles/Dockerfile.airflow
+    container_name: dst-airflow-scheduler
+    command: scheduler
+    environment:
+      <<: *airflow-common-env
+    volumes:
+      - ./src/pipeline/airflow_dags:/opt/airflow/dags:ro
+      - ./logs/airflow:/opt/airflow/logs
+      - ./src:/opt/airflow/src:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - dst-network
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy (Production)
+  nginx:
+    image: nginx:alpine
+    container_name: dst-nginx
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deployment/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deployment/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - api
+      - dashboard
+    networks:
+      - dst-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    profiles:
+      - production
+
+  # Prometheus for Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: dst-prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./deployment/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - dst-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # Grafana for Metrics Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: dst-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deployment/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./deployment/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - dst-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+# Persistent Volume Definitions
+volumes:
+  mysql_data:
+    driver: local
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  neo4j_import:
+    driver: local
+  elasticsearch_data:
+    driver: local
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# Network Definition
+networks:
+  dst-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

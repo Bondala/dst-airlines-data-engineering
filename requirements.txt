@@ -1,0 +1,138 @@
+# DST Airlines Data Engineering Project - Dependencies
+
+# Core Framework and API
+fastapi[all]==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Web Frameworks and Dashboards
+streamlit==1.28.1
+dash[diskcache]==2.15.0
+plotly==5.17.0
+dash-bootstrap-components==1.5.0
+
+# Data Processing and Analysis
+pandas==2.1.3
+numpy==1.25.2
+scipy==1.11.4
+
+# HTTP Requests and Web Scraping
+requests==2.31.0
+httpx==0.25.2
+beautifulsoup4==4.12.2
+selenium==4.15.2
+aiohttp==3.9.0
+
+# Database Drivers and ORMs
+# MySQL
+mysql-connector-python==8.2.0
+aiomysql==0.2.0
+sqlalchemy[asyncio]==2.0.23
+alembic==1.13.0
+
+# MongoDB
+pymongo==4.6.0
+motor==3.3.2
+
+# Neo4j
+neo4j==5.15.0
+
+# Elasticsearch
+elasticsearch==8.11.0
+elasticsearch-dsl==8.11.0
+
+# PostgreSQL (for Airflow)
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+
+# Data Pipeline and Scheduling
+apache-airflow==2.7.3
+celery==5.3.4
+redis==5.0.1
+
+# Authentication and Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+
+# Configuration Management
+python-decouple==3.8
+pyyaml==6.0.1
+python-dotenv==1.0.0
+
+# Logging and Monitoring
+structlog==23.2.0
+prometheus-client==0.19.0
+
+# Development and Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+httpx==0.25.2  # for API testing
+
+# Code Quality and Formatting
+black==23.11.0
+flake8==6.1.0
+isort==5.12.0
+mypy==1.7.1
+
+# Jupyter and Data Exploration
+jupyter==1.0.0
+jupyterlab==4.0.9
+ipywidgets==8.1.1
+matplotlib==3.8.2
+seaborn==0.13.0
+
+# Time and Date Handling
+python-dateutil==2.8.2
+pytz==2023.3
+
+# File Processing
+openpyxl==3.1.2
+xlsxwriter==3.1.9
+
+# Environment and System
+python-environ==0.4.54
+
+# Additional Utilities
+click==8.1.7
+rich==13.7.0
+tqdm==4.66.1
+faker==20.1.0  # for generating test data
+
+# Image Processing (if needed for airport images, etc.)
+pillow==10.1.0
+
+# Geospatial Data (for airport coordinates, flight paths)
+geopy==2.4.1
+folium==0.15.1
+
+# Email notifications (optional)
+emails==0.6.0
+
+# Caching
+redis-py==5.0.1
+
+# API Documentation
+swagger-ui-bundle==0.0.9
+
+# Development Dependencies
+pre-commit==3.6.0
+bandit==1.7.5  # Security linting
+
+# Production Dependencies
+gunicorn==21.2.0
+supervisor==4.2.5
+
+# Kubernetes (if deploying to K8s)
+kubernetes==28.1.0
+
+# AWS SDK (if using AWS services)
+boto3==1.34.0
+botocore==1.34.0
+
+# Version pinning for compatibility
+# Pinning major versions to prevent breaking changes
+# while allowing minor updates for security patches
